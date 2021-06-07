@@ -1,21 +1,19 @@
 use crate::{Result, Error};
 use darwinia::Darwinia;
 use std::time::Duration;
-use tokio::time::delay_for;
-use substrate_subxt::{
-    Runtime,
-    system::System,
-};
+use substrate_subxt::sp_runtime::generic::Header;
+use substrate_subxt::sp_runtime::traits::BlakeTwo256;
+use async_std::task;
 
 /// DarwiniaTracker
-pub struct DarwiniaBlockTracker<R: Runtime> {
-	darwinia: Darwinia<R>,
+pub struct DarwiniaBlockTracker {
+	darwinia: Darwinia,
 	next_block: u32,
 }
 
-impl<R: Runtime> DarwiniaBlockTracker<R> {
+impl DarwiniaBlockTracker {
 	/// new
-	pub fn new(darwinia: Darwinia<R>, scan_from: u32) -> Self {
+	pub fn new(darwinia: Darwinia, scan_from: u32) -> Self {
 		Self {
 			darwinia,
 			next_block: scan_from,
@@ -23,34 +21,30 @@ impl<R: Runtime> DarwiniaBlockTracker<R> {
 	}
 
 	/// get next block
-	pub async fn next_block(&mut self) -> Result<<R as System>::Header>
-        where R: System<BlockNumber = u32>,
-    {
+	pub async fn next_block(&mut self) -> Result<Header<u32, BlakeTwo256>> {
 		loop {
 			match self.get_next_block().await {
 				Ok(result) => {
 					if let Some(header) = result {
 						return Ok(header);
 					} else {
-						delay_for(Duration::from_secs(6)).await;
+						task::sleep(Duration::from_secs(6)).await;
 					}
 				}
 				Err(err) => {
 					error!("An error occurred while tracking next darwinia block: {:#?}", err);
 					let err_msg = format!("{:?}", err);
 					if err_msg.contains("restart") {
-						return Err(Error::RestartFromJsonrpsee.into());
+						return Err(Error::RestartNeeded);
 					} else {
-						delay_for(Duration::from_secs(30)).await;
+						task::sleep(Duration::from_secs(30)).await;
 					}
 				}
 			}
 		}
 	}
 
-	async fn get_next_block(&mut self) -> Result<Option<<R as System>::Header>>
-        where R: System<BlockNumber = u32>,
-    {
+	async fn get_next_block(&mut self) -> anyhow::Result<Option<Header<u32, BlakeTwo256>>> {
 		let finalized_block_hash = self.darwinia.finalized_head().await?;
 		match self
 			.darwinia

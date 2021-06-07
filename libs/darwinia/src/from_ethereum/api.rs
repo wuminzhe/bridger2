@@ -2,14 +2,10 @@ use crate::Darwinia;
 
 use crate::error::{Error, Result};
 use std::collections::HashMap;
-type PendingRelayHeaderParcel<Relay> = <Relay as EthereumRelay>::PendingRelayHeaderParcel;
-type AffirmationsReturn<Game> =
-	HashMap<u64, HashMap<u32, Vec<<Game as EthereumRelayerGame>::RelayAffirmation>>>;
+type PendingRelayHeaderParcel = <DarwiniaRuntime as EthereumRelay>::PendingRelayHeaderParcel;
+type RelayAffirmation = <DarwiniaRuntime as EthereumRelayerGame>::RelayAffirmation;
+type AffirmationsReturn = HashMap<u64, HashMap<u32, Vec<RelayAffirmation>>>;
 
-use primitives::chain::RelayAffirmationContainer;
-use primitives::frame::sudo::Sudo;
-use primitives::frame::ethereum::runtime_ext::RuntimeExt;
-use primitives::frame::technical_committee::TechnicalCommittee;
 use primitives::{
 	chain::{
 		ethereum::{EthereumReceiptProofThing, EthereumRelayHeaderParcel, RedeemFor},
@@ -18,70 +14,42 @@ use primitives::{
 	},
 	frame::{
 		ethereum::{
-			backing::{EthereumBacking, Redeem, RedeemCallExt},
+			backing::{Redeem, RedeemCallExt},
 			game::{AffirmationsStoreExt, EthereumRelayerGame},
+			issuing::{RedeemErc20, RedeemErc20CallExt, RegisterErc20, RegisterErc20CallExt},
 			relay::{
 				Affirm, AffirmCallExt, ConfirmedBlockNumbersStoreExt, EthereumRelay,
 				PendingRelayHeaderParcelsStoreExt, SetConfirmedParcel,
 				VotePendingRelayHeaderParcel, VotePendingRelayHeaderParcelCallExt,
 			},
 		},
-		proxy::{Proxy, ProxyCallExt},
+		proxy::ProxyCallExt,
 		sudo::SudoCallExt,
 		technical_committee::MembersStoreExt,
 	},
+	runtime::DarwiniaRuntime,
 };
 
 use core::marker::PhantomData;
+use substrate_subxt::sp_core::H256;
 
 use super::Account;
-use substrate_subxt::balances::Balances;
-use substrate_subxt::sp_core::H256;
-use substrate_subxt::sp_runtime::traits::Verify;
-use substrate_subxt::system::System;
-use substrate_subxt::{Runtime, SignedExtension, SignedExtra};
+use crate::AccountId;
 
 /// Dawrinia API
 #[derive(Clone)]
-pub struct Ethereum2Darwinia<R: Runtime> {
+pub struct Ethereum2Darwinia {
 	/// darwinia client
-	pub darwinia: Darwinia<R>,
+	pub darwinia: Darwinia,
 }
 
-impl<R: Runtime + EthereumRelay> Ethereum2Darwinia<R> {
-	pub fn new(darwinia: Darwinia<R>) -> Self {
+impl Ethereum2Darwinia {
+	pub fn new(darwinia: Darwinia) -> Self {
 		Self { darwinia }
 	}
 
-	/// Get the last confirmed block
-	pub async fn last_confirmed(&self) -> Result<u64> {
-		Ok(
-			if let Some(confirmed) = self.confirmed_block_numbers().await?.iter().max() {
-				*confirmed
-			} else {
-				0
-			},
-		)
-	}
-
-	/// Get confirmed block numbers
-	pub async fn confirmed_block_numbers(&self) -> Result<Vec<u64>> {
-		Ok(self.darwinia.subxt.confirmed_block_numbers(None).await?)
-	}
-}
-
-impl<R: Runtime> Ethereum2Darwinia<R> {
 	/// Print Detail
-	pub async fn account_detail(
-		&self,
-		block_number: Option<u32>,
-		account: &Account<R>,
-	) -> Result<()>
-	where
-		R: System<Hash = H256> + Sudo + TechnicalCommittee,
-		R::Signature: From<sp_keyring::sr25519::sr25519::Signature>,
-		<R::Signature as Verify>::Signer: From<sp_keyring::sr25519::sr25519::Public>,
-	{
+	pub async fn account_detail(&self, block_number: Option<u32>, account: &Account) -> Result<()> {
 		info!("🧔 ethereum => darwinia account");
 		let mut roles = self.darwinia.account_role(&account.0).await?;
 		if self.is_tech_comm_member(block_number, &account).await? {
@@ -103,13 +71,8 @@ impl<R: Runtime> Ethereum2Darwinia<R> {
 	pub async fn is_tech_comm_member(
 		&self,
 		block_number: Option<u32>,
-		account: &Account<R>,
-	) -> Result<bool>
-	where
-		R: System<Hash = H256> + TechnicalCommittee,
-		R::Signature: From<sp_keyring::sr25519::sr25519::Signature>,
-		<R::Signature as Verify>::Signer: From<sp_keyring::sr25519::sr25519::Public>,
-	{
+		account: &Account,
+	) -> Result<bool> {
 		let block_hash = self.darwinia.block_number2hash(block_number).await?;
 		let tech_comm_members = self.darwinia.subxt.members(block_hash).await?;
 		Ok(tech_comm_members.contains(account.0.real()))
@@ -118,15 +81,9 @@ impl<R: Runtime> Ethereum2Darwinia<R> {
 	/// set confirmed with sudo privilege
 	pub async fn set_confirmed_parcel(
 		&self,
-		account: &Account<R>,
+		account: &Account,
 		parcel: EthereumRelayHeaderParcel,
-	) -> Result<H256>
-	where
-		R: System<Hash = H256> + EthereumRelay + Sudo,
-		<R as System>::Address: From<<R as System>::AccountId>,
-		R::Signature: From<sp_keyring::sr25519::sr25519::Signature>,
-		<<R::Extra as SignedExtra<R>>::Extra as SignedExtension>::AdditionalSigned: Sync + Send,
-	{
+	) -> Result<H256> {
 		let ex = self.darwinia.subxt.encode(SetConfirmedParcel {
 			ethereum_relay_header_parcel: parcel,
 			_runtime: PhantomData::default(),
@@ -137,17 +94,10 @@ impl<R: Runtime> Ethereum2Darwinia<R> {
 	/// Vote pending relay header parcel
 	pub async fn vote_pending_relay_header_parcel(
 		&self,
-		account: &Account<R>,
+		account: &Account,
 		pending: u64,
 		aye: bool,
-	) -> Result<<R as System>::Hash>
-	where
-		<R as System>::Address: From<<R as System>::AccountId>,
-		R::Signature: From<sp_keyring::sr25519::sr25519::Signature>,
-		<R::Signature as Verify>::Signer: From<sp_keyring::sr25519::sr25519::Public>,
-		<<R::Extra as SignedExtra<R>>::Extra as SignedExtension>::AdditionalSigned: Send + Sync,
-		R: System<Hash = H256> + Proxy<ProxyType = ProxyType> + TechnicalCommittee + EthereumRelay,
-	{
+	) -> Result<H256> {
 		if self.is_tech_comm_member(None, &account).await? {
 			match &account.0.real {
 				Some(real) => {
@@ -193,10 +143,7 @@ impl<R: Runtime> Ethereum2Darwinia<R> {
 	///     round_id: [...]
 	///   }
 	/// }
-	pub async fn affirmations(&self) -> Result<AffirmationsReturn<R>>
-	where
-		R: EthereumRelayerGame + EthereumRelay,
-	{
+	pub async fn affirmations(&self) -> Result<AffirmationsReturn> {
 		let mut result = HashMap::new();
 		let mut iter = self.darwinia.subxt.affirmations_iter(None).await?;
 		while let Some((mut storage_key, affirmations)) = iter.next().await? {
@@ -208,7 +155,7 @@ impl<R: Runtime> Ethereum2Darwinia<R> {
 
 			//
 			if result.get(&game_id).is_none() {
-				result.insert(game_id, HashMap::<u32, Vec<R::RelayAffirmation>>::new());
+				result.insert(game_id, HashMap::<u32, Vec<RelayAffirmation>>::new());
 			}
 			let game = result.get_mut(&game_id).unwrap();
 
@@ -224,17 +171,16 @@ impl<R: Runtime> Ethereum2Darwinia<R> {
 	}
 
 	/// affirmations contains block?
-	pub fn contains(
-		affirmations: &[<R as EthereumRelayerGame>::RelayAffirmation],
-		block: u64,
-	) -> bool
-	where
-		R: Balances + EthereumRelayerGame,
-	{
+	pub fn contains(affirmations: &[RelayAffirmation], block: u64) -> bool {
 		for affirmation in affirmations {
-            if affirmation.contains(block) {
-                return true;
-            }
+			let blocks: &Vec<u64> = &affirmation
+				.relay_header_parcels
+				.iter()
+				.map(|bp| bp.header.number)
+				.collect();
+			if blocks.contains(&block) {
+				return true;
+			}
 		}
 
 		// TODO: Checking the equality of the affirmations
@@ -245,11 +191,24 @@ impl<R: Runtime> Ethereum2Darwinia<R> {
 		false
 	}
 
+	/// Get confirmed block numbers
+	pub async fn confirmed_block_numbers(&self) -> Result<Vec<u64>> {
+		Ok(self.darwinia.subxt.confirmed_block_numbers(None).await?)
+	}
+
+	/// Get the last confirmed block
+	pub async fn last_confirmed(&self) -> Result<u64> {
+		Ok(
+			if let Some(confirmed) = self.confirmed_block_numbers().await?.iter().max() {
+				*confirmed
+			} else {
+				0
+			},
+		)
+	}
+
 	/// Get pending headers
-	pub async fn pending_headers(&self) -> Result<Vec<PendingRelayHeaderParcel<R>>>
-	where
-		R: EthereumRelay,
-	{
+	pub async fn pending_headers(&self) -> Result<Vec<PendingRelayHeaderParcel>> {
 		Ok(self
 			.darwinia
 			.subxt
@@ -260,15 +219,9 @@ impl<R: Runtime> Ethereum2Darwinia<R> {
 	/// Submit affirmation
 	pub async fn affirm(
 		&self,
-		account: &Account<R>,
+		account: &Account,
 		parcel: EthereumRelayHeaderParcel,
-	) -> Result<<R as System>::Hash>
-	where
-		<R as System>::Address: From<<R as System>::AccountId>,
-		R::Signature: From<sp_keyring::sr25519::sr25519::Signature>,
-		<<R::Extra as SignedExtra<R>>::Extra as SignedExtension>::AdditionalSigned: Send + Sync,
-		R: Proxy<ProxyType = ProxyType> + EthereumRelay,
-	{
+	) -> Result<H256> {
 		match &account.0.real {
 			Some(real) => {
 				trace!("Proxy call `affirm` for {:?}", real);
@@ -301,16 +254,10 @@ impl<R: Runtime> Ethereum2Darwinia<R> {
 	/// Redeem
 	pub async fn redeem(
 		&self,
-		account: &Account<R>,
+		account: &Account,
 		redeem_for: RedeemFor,
 		proof: EthereumReceiptProofThing,
-	) -> Result<<R as System>::Hash>
-	where
-		<R as System>::Address: From<<R as System>::AccountId>,
-		R::Signature: From<sp_keyring::sr25519::sr25519::Signature>,
-		<<R::Extra as SignedExtra<R>>::Extra as SignedExtension>::AdditionalSigned: Send + Sync,
-		R: Proxy<ProxyType = ProxyType> + EthereumBacking,
-	{
+	) -> Result<H256> {
 		let ethereum_tx_hash = proof
 			.header
 			.hash
@@ -357,15 +304,7 @@ impl<R: Runtime> Ethereum2Darwinia<R> {
 	}
 
 	/// has_voted
-	pub fn has_voted(
-		&self,
-		account: &Account<R>,
-		voting_state: RelayVotingState<<R as System>::AccountId>,
-	) -> bool
-	where
-		<R as System>::Address: From<<R as System>::AccountId>,
-		R::Signature: From<sp_keyring::sr25519::sr25519::Signature>,
-	{
+	pub fn has_voted(&self, account: &Account, voting_state: RelayVotingState<AccountId>) -> bool {
 		match &account.0.real {
 			None => voting_state.contains(&account.0.account_id),
 			Some(real) => voting_state.contains(real),
@@ -375,38 +314,66 @@ impl<R: Runtime> Ethereum2Darwinia<R> {
 	/// register erc20
 	pub async fn register_erc20(
 		&self,
-		account: &Account<R>,
+		account: &Account,
 		proof: EthereumReceiptProofThing,
-	) -> Result<<R as System>::Hash>
-	where
-		<R as System>::Address: From<<R as System>::AccountId>,
-		R::Signature: From<sp_keyring::sr25519::sr25519::Signature>,
-		<<R::Extra as SignedExtra<R>>::Extra as SignedExtension>::AdditionalSigned: Send + Sync,
-		R: RuntimeExt + Clone,
-	{
-        Ok(R::register_erc20(
-            &self.darwinia.subxt,
-            account.0.real.clone(),
-            account.0.signer.clone(),
-            proof).await?)
-    }
+	) -> Result<H256> {
+		match &account.0.real {
+			Some(real) => {
+				let call = RegisterErc20 {
+					_runtime: PhantomData::default(),
+					proof,
+				};
+
+				let ex = self.darwinia.subxt.encode(call).unwrap();
+				Ok(self
+					.darwinia
+					.subxt
+					.proxy(
+						&account.0.signer,
+						real.clone(),
+						Some(ProxyType::EthereumBridge),
+						&ex,
+					)
+					.await?)
+			}
+			None => Ok(self
+				.darwinia
+				.subxt
+				.register_erc20(&account.0.signer, proof)
+				.await?),
+		}
+	}
 
 	/// redeem erc20
 	pub async fn redeem_erc20(
 		&self,
-		account: &Account<R>,
+		account: &Account,
 		proof: EthereumReceiptProofThing,
-	) -> Result<<R as System>::Hash>
-	where
-		<R as System>::Address: From<<R as System>::AccountId>,
-		R::Signature: From<sp_keyring::sr25519::sr25519::Signature>,
-		<<R::Extra as SignedExtra<R>>::Extra as SignedExtension>::AdditionalSigned: Send + Sync,
-		R: RuntimeExt + Clone,
-	{
-        Ok(R::redeem_erc20(
-            &self.darwinia.subxt,
-            account.0.real.clone(),
-            account.0.signer.clone(),
-            proof).await?)
+	) -> Result<H256> {
+		match &account.0.real {
+			Some(real) => {
+				let call = RedeemErc20 {
+					_runtime: PhantomData::default(),
+					proof,
+				};
+
+				let ex = self.darwinia.subxt.encode(call).unwrap();
+				Ok(self
+					.darwinia
+					.subxt
+					.proxy(
+						&account.0.signer,
+						real.clone(),
+						Some(ProxyType::EthereumBridge),
+						&ex,
+					)
+					.await?)
+			}
+			None => Ok(self
+				.darwinia
+				.subxt
+				.redeem_erc20(&account.0.signer, proof)
+				.await?),
+		}
 	}
 }

@@ -50,9 +50,6 @@ pub enum Error {
 	#[error("No header hash in EthereumReceiptProofOfThing")]
 	NoHeaderHashInEthereumReceiptProofOfThing,
 
-	#[error(transparent)]
-	PrimitiveError(#[from] primitives::result::Error),
-
 	#[error("Other error: {0}")]
 	Other(String),
 }

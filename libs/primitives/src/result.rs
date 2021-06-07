@@ -15,14 +15,8 @@ pub enum Error {
 	#[error(transparent)]
 	SerdeJson(#[from] serde_json::Error),
 
-	#[error(transparent)]
-	SubxtError(#[from] substrate_subxt::Error),
-
 	#[error("Fail to get ethereum header of block {1}: {0}")]
 	FailToGetEthereumHeader(String, u64),
-
-    #[error("Do not support {0}")]
-    DonotSupport(String),
 }
 
 /// Sup Result

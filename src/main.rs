@@ -1,16 +1,27 @@
 mod router;
 
 pub use crate::router::Router;
-use service::Message;
+use service::{Message, Service};
 use affirm::AffirmService;
 use log::LogService;
+use darwinia_relayer::DarwiniaRelayerService;
 
 #[async_std::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
 	// router init
 	let mut router = Router::new();
-	router.add(Box::new(AffirmService::new(0)));
-	router.add(Box::new(LogService::new()));
+
+	let mut affirm_service = AffirmService::new(0);
+	affirm_service.start().await?;
+	router.add(Box::new(affirm_service));
+
+	let mut log_service = LogService::new();
+	log_service.start().await?;
+	router.add(Box::new(log_service));
+
+	let mut darwinia_relayer_service = DarwiniaRelayerService::new("wss://rpc.darwinia.network", 100000);
+	darwinia_relayer_service.start().await?;
+	router.add(Box::new(darwinia_relayer_service));
 
 	//
 	let msg = Message {
@@ -30,4 +41,5 @@ async fn main() {
 		content: "sfsfsdfsdf",
 	};
 	router.send(msg3).await;
+	Ok(())
 }

@@ -31,7 +31,8 @@
 //! GPL-3.0
 #![allow(clippy::ptr_offset_with_cast)]
 #![allow(clippy::assign_op_pattern)]
-#![allow(missing_docs)]
+#![allow(clippy::manual_range_contains)]
+#![deny(missing_docs)]
 #[macro_use]
 extern crate serde;
 
@@ -43,11 +44,11 @@ pub mod chain;
 pub mod frame;
 pub mod result;
 pub mod rpc;
-pub mod runtimes;
+pub mod runtime;
 
 #[cfg(test)]
 mod tests {
-	use super::runtimes::darwinia::DarwiniaRuntime;
+	use super::runtime::DarwiniaRuntime;
 	use substrate_subxt::ClientBuilder;
 	// use super::frame::ethereum::relay::PendingRelayHeaderParcelsStoreExt;
 	use super::frame::technical_committee::MembersStoreExt;
@@ -55,7 +56,7 @@ mod tests {
 	#[tokio::test]
 	async fn test_rpc() {
 		let client = ClientBuilder::<DarwiniaRuntime>::new()
-			.set_url("ws://100.64.200.3:10000")
+			.set_url("wss://pangolin-rpc.darwinia.network")
 			.skip_type_sizes_check()
 			.build()
 			.await
@@ -74,7 +75,7 @@ mod tests {
 	#[tokio::test]
 	async fn test_storage() {
 		let client = ClientBuilder::<DarwiniaRuntime>::new()
-			.set_url("ws://100.64.200.3:10000")
+			.set_url("wss://pangolin-rpc.darwinia.network")
 			.skip_type_sizes_check()
 			.build()
 			.await

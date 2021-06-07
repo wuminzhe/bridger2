@@ -7,24 +7,22 @@ use substrate_subxt::system::System;
 use substrate_subxt_proc_macro::{module, Call, Event, Store};
 
 /// AuthoritiesToSignReturn
-pub type AuthoritiesToSignReturn<T> = Option<(
+pub type AuthoritiesToSignReturn<T> = (
 	<T as EthereumRelayAuthorities>::RelayAuthorityMessage,
 	Vec<(
 		<T as System>::AccountId,
 		<T as EthereumRelayAuthorities>::RelayAuthoritySignature,
 	)>,
+);
+
+/// MmrRootsToSignReturn
+pub type MmrRootsToSignReturn<T> = Vec<(
+    <T as System>::AccountId,
+    <T as EthereumRelayAuthorities>::RelayAuthoritySignature,
 )>;
 
-/// AuthoritiesToSignReturn
-pub type MmrRootsToSignReturn<T> = Option<
-	Vec<(
-		<T as System>::AccountId,
-		<T as EthereumRelayAuthorities>::RelayAuthoritySignature,
-	)>,
->;
-
 /// Relay Authority
-#[derive(Clone, Encode, Decode, Default, Debug, PartialEq)]
+#[derive(Clone, Encode, Decode, Default, Debug)]
 pub struct RelayAuthority<AccountId, RelayAuthoritySigner, RingBalance, BlockNumber> {
 	/// account_id
 	pub account_id: AccountId,
@@ -40,13 +38,13 @@ pub struct RelayAuthority<AccountId, RelayAuthoritySigner, RingBalance, BlockNum
 #[module]
 pub trait EthereumRelayAuthorities: System {
 	/// Relay Authority
-	type RelayAuthority: 'static + Encode + Decode + Send + Sync + Default + PartialEq;
+	type RelayAuthority: 'static + Encode + Decode + Send + Sync + Default;
 	/// Relay authority signer
 	type RelayAuthoritySigner: 'static + Encode + Decode + Sync + Send + Default;
 	/// Relay signature
-	type RelayAuthoritySignature: 'static + Encode + Decode + Sync + Send + Sync + Default + Clone;
+	type RelayAuthoritySignature: 'static + Encode + Decode + Sync + Send + Sync + Default;
 	/// Relay signature
-	type RelayAuthorityMessage: 'static + Encode + Decode + Sync + Send + Default + PartialEq;
+	type RelayAuthorityMessage: 'static + Encode + Decode + Sync + Send + Default;
 }
 
 //////
@@ -178,7 +176,7 @@ pub struct Authorities<T: EthereumRelayAuthorities> {
 /// AuthoritiesToSign
 #[derive(Clone, Debug, Eq, PartialEq, Store, Encode)]
 pub struct AuthoritiesToSign<T: EthereumRelayAuthorities> {
-	#[store(returns = AuthoritiesToSignReturn<T>)]
+	#[store(returns = Option<AuthoritiesToSignReturn<T>>)]
 	/// Runtime marker
 	pub _runtime: PhantomData<T>,
 }
@@ -194,7 +192,7 @@ pub struct NextTerm<T: EthereumRelayAuthorities> {
 /// AuthorityTerm
 #[derive(Clone, Debug, Eq, PartialEq, Store, Encode)]
 pub struct MMRRootsToSign<T: EthereumRelayAuthorities> {
-	#[store(returns = MmrRootsToSignReturn<T>)]
+	#[store(returns = Option<MmrRootsToSignReturn<T>>)]
 	/// Block number
 	pub block_number: <T as System>::BlockNumber,
 	/// Runtime marker

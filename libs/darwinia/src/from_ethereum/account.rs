@@ -1,13 +1,12 @@
 use crate::DarwiniaAccount;
-use substrate_subxt::Runtime;
 
 /// Account
 #[derive(Clone)]
-pub struct Account<R: Runtime>(pub DarwiniaAccount<R>);
+pub struct Account(pub DarwiniaAccount);
 
-impl<R: Runtime> Account<R> {
+impl Account {
 	/// Create a new Account
-	pub fn new(darwinia_account: DarwiniaAccount<R>) -> Self {
+	pub fn new(darwinia_account: DarwiniaAccount) -> Self {
 		Self(darwinia_account)
 	}
 }

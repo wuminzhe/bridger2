@@ -1,32 +1,31 @@
+use jsonrpsee_http_client::to_json_value;
+use primitives::frame::sudo::KeyStoreExt;
+use primitives::{
+	//todo move to e2d
+	frame::ethereum::{backing::VerifiedProofStoreExt, issuing::VerifiedIssuingProofStoreExt},
+	runtime::DarwiniaRuntime,
+};
 use substrate_subxt::{
 	events::Raw,
 	sp_core::storage::{StorageData, StorageKey},
 	sp_core::{twox_128, Bytes, H256},
-	sp_runtime::traits::Header as TraitHeader,
-	BlockNumber, Client, ClientBuilder, Runtime,
+	sp_runtime::generic::Header,
+	sp_runtime::traits::{BlakeTwo256, Header as TraitHeader},
+	BlockNumber, Client, ClientBuilder,
 };
 
+use crate::error::{Error, Result};
+use crate::rpc::*;
 use crate::{account::DarwiniaAccount, DarwiniaEvents, EventInfo};
 
-use crate::error::{Error, Result};
-use jsonrpsee_types::jsonrpc::{to_value as to_json_value, Params};
-
-use crate::rpc::*;
-use primitives::frame::bridge::relay_authorities::EthereumRelayAuthorities;
-use primitives::frame::ethereum::runtime_ext::RuntimeExt;
-use primitives::frame::sudo::KeyStoreExt;
-use primitives::frame::sudo::Sudo;
-use substrate_subxt::sp_runtime::traits::Verify;
-use substrate_subxt::system::System;
-
-pub struct Darwinia<R: Runtime> {
+pub struct Darwinia {
 	/// client
-	pub subxt: Client<R>,
+	pub subxt: Client<DarwiniaRuntime>,
 	/// Event Parser
-	pub event: DarwiniaEvents<R>,
+	pub event: DarwiniaEvents,
 }
 
-impl<R: Runtime> Clone for Darwinia<R> {
+impl Clone for Darwinia {
 	fn clone(&self) -> Self {
 		Self {
 			subxt: self.subxt.clone(),
@@ -35,9 +34,9 @@ impl<R: Runtime> Clone for Darwinia<R> {
 	}
 }
 
-impl<R: Runtime> Darwinia<R> {
-	pub async fn new(url: &str) -> Result<Darwinia<R>> {
-		let client = ClientBuilder::<R>::new()
+impl Darwinia {
+	pub async fn new(url: &str) -> Result<Darwinia> {
+		let client = ClientBuilder::<DarwiniaRuntime>::new()
 			.set_url(url)
 			.skip_type_sizes_check()
 			.build()
@@ -50,50 +49,6 @@ impl<R: Runtime> Darwinia<R> {
 		})
 	}
 
-	/// block number to hash
-	pub async fn block_number2hash(&self, block_number: Option<u32>) -> Result<Option<<R as System>::Hash>> {
-		let block_number = block_number.map(|n| n.into());
-		Ok(self.subxt.block_hash(block_number).await?)
-	}
-
-	/// is_sudo_key
-	pub async fn is_sudo_key(
-		&self,
-		block_number: Option<u32>,
-		account: &DarwiniaAccount<R>,
-	) -> Result<bool>
-	where
-		R: System<Hash = H256> + Sudo,
-		R::Signature: From<sp_keyring::sr25519::sr25519::Signature>,
-		<R::Signature as Verify>::Signer: From<sp_keyring::sr25519::sr25519::Public>,
-	{
-		let block_hash = self.block_number2hash(block_number).await?;
-		let sudo = self.subxt.key(block_hash).await?;
-		Ok(&sudo == account.real())
-	}
-
-	/// role
-	pub async fn account_role(&self, account: &DarwiniaAccount<R>) -> Result<Vec<String>>
-	where
-		R: System<Hash = H256> + Sudo,
-		R::Signature: From<sp_keyring::sr25519::sr25519::Signature>,
-		<R::Signature as Verify>::Signer: From<sp_keyring::sr25519::sr25519::Public>,
-	{
-		let mut roles = vec!["Normal".to_string()];
-		if self.is_sudo_key(None, account).await? {
-			roles.push("Sudo".to_string());
-		}
-		Ok(roles)
-	}
-
-	/// Check if should redeem
-	pub async fn verified(&self, block_hash: web3::types::H256, tx_index: u64) -> Result<bool>
-	where
-		R: RuntimeExt,
-	{
-		Ok(R::verify(&self.subxt, block_hash.to_fixed_bytes(), tx_index).await?)
-	}
-
 	/// get mmr root of darwinia
 	pub async fn header_mmr(
 		&self,
@@ -101,10 +56,10 @@ impl<R: Runtime> Darwinia<R> {
 		block_number_of_last_leaf: u64,
 		hash: H256,
 	) -> Result<Option<HeaderMMR>> {
-		let params = Params::Array(vec![
+		let params = &[
 			to_json_value(block_number_of_member_leaf)?,
 			to_json_value(block_number_of_last_leaf)?,
-		]);
+		];
 		let result: HeaderMMRRpc = self
 			.subxt
 			.rpc
@@ -125,7 +80,7 @@ impl<R: Runtime> Darwinia<R> {
 		&self,
 		module_name: &str,
 		storage_name: &str,
-		header_hash: <R as System>::Hash,
+		header_hash: H256,
 	) -> Result<StorageData> {
 		let mut storage_key = twox_128(module_name.as_bytes()).to_vec();
 		storage_key.extend(twox_128(storage_name.as_bytes()).to_vec());
@@ -157,10 +112,10 @@ impl<R: Runtime> Darwinia<R> {
 	}
 
 	/// get events from a special block
-	pub async fn get_events_from_block_hash(&self, hash: <R as System>::Hash) -> Result<Vec<EventInfo<R>>>
-	where
-		R: EthereumRelayAuthorities,
-	{
+	pub async fn get_events_from_block_hash(
+		&self,
+		hash: H256,
+	) -> Result<Vec<EventInfo<DarwiniaRuntime>>> {
 		let storage_data = self.get_storage_data("System", "Events", hash).await?;
 
 		let raw_events = self.event.decoder.decode_events(&mut &storage_data.0[..])?;
@@ -189,10 +144,10 @@ impl<R: Runtime> Darwinia<R> {
 	}
 
 	/// get events from a special block
-	pub async fn get_events_from_block_number(&self, block: u32) -> Result<Vec<EventInfo<R>>>
-	where
-		R: EthereumRelayAuthorities + System<Hash = H256>,
-	{
+	pub async fn get_events_from_block_number(
+		&self,
+		block: u32,
+	) -> Result<Vec<EventInfo<DarwiniaRuntime>>> {
 		let blockno = BlockNumber::from(block);
 		match self.subxt.block_hash(Some(blockno)).await? {
 			Some(hash) => return self.get_events_from_block_hash(hash).await,
@@ -204,11 +159,8 @@ impl<R: Runtime> Darwinia<R> {
 	}
 
 	/// get mmr root
-	pub async fn get_mmr_root(&self, leaf_index: u32) -> Result<H256>
-	where
-		R: System<BlockNumber = u32>,
-	{
-		let block_number = leaf_index + 1u32;
+	pub async fn get_mmr_root(&self, leaf_index: u32) -> Result<H256> {
+		let block_number = leaf_index + 1;
 
 		let block_hash = self
 			.subxt
@@ -233,8 +185,9 @@ impl<R: Runtime> Darwinia<R> {
 						block_number,
 					));
 				}
-
-				H256::from_slice(parent_mmr_root)
+				let mut mmr_root: [u8; 32] = [0; 32];
+				mmr_root.copy_from_slice(&parent_mmr_root);
+				H256(mmr_root)
 			} else {
 				return Err(Error::NoMmrRootInDarwiniaHeader(block_number));
 			}
@@ -249,17 +202,13 @@ impl<R: Runtime> Darwinia<R> {
 		&self,
 		storage_key: Vec<u8>,
 		block_hash: H256,
-	) -> Result<Vec<Bytes>>
-	where
-		R: System<Hash = H256>,
-	{
+	) -> Result<Vec<Bytes>> {
 		let keys = vec![StorageKey(storage_key)];
 		Ok(self.subxt.read_proof(keys, Some(block_hash)).await?.proof)
 	}
 
 	/// get block header by number
-	pub async fn get_block_by_number(&self, number: u32) -> Result<<R as System>::Header>
-	{
+	pub async fn get_block_by_number(&self, number: u32) -> Result<Header<u32, BlakeTwo256>> {
 		match self
 			.subxt
 			.block_hash(Some(BlockNumber::from(number)))
@@ -273,23 +222,66 @@ impl<R: Runtime> Darwinia<R> {
 		}
 	}
 
+	/// block number to hash
+	pub async fn block_number2hash(&self, block_number: Option<u32>) -> Result<Option<H256>> {
+		let block_number = block_number.map(|n| n.into());
+		Ok(self.subxt.block_hash(block_number).await?)
+	}
+
+	/// is_sudo_key
+	pub async fn is_sudo_key(
+		&self,
+		block_number: Option<u32>,
+		account: &DarwiniaAccount,
+	) -> Result<bool> {
+		let block_hash = self.block_number2hash(block_number).await?;
+		let sudo = self.subxt.key(block_hash).await?;
+		Ok(&sudo == account.real())
+	}
+
+	/// role
+	pub async fn account_role(&self, account: &DarwiniaAccount) -> Result<Vec<String>> {
+		let mut roles = vec!["Normal".to_string()];
+		if self.is_sudo_key(None, account).await? {
+			roles.push("Sudo".to_string());
+		}
+		Ok(roles)
+	}
+
 	/// finalized_head
-	pub async fn finalized_head(&self) -> Result<<R as System>::Hash>
-	{
+	pub async fn finalized_head(&self) -> Result<H256> {
 		let hash = self.subxt.finalized_head().await?;
 		Ok(hash)
 	}
 
 	/// get block by hash
-	pub async fn get_block_number_by_hash(
-		&self,
-		block_hash: <R as System>::Hash,
-	) -> Result<Option<<R as System>::BlockNumber>>
-	{
+	pub async fn get_block_number_by_hash(&self, block_hash: H256) -> Result<Option<u32>> {
 		let block = self.subxt.block(Some(block_hash)).await?;
 		if let Some(block) = block {
-			return Ok(Some(*block.block.header.number()));
+			return Ok(Some(block.block.header.number));
 		}
 		Ok(None)
+	}
+
+	/// Check if should redeem
+	pub async fn verified(&self, block_hash: web3::types::H256, tx_index: u64) -> Result<bool> {
+		Ok(self
+			.subxt
+			.verified_proof((block_hash.to_fixed_bytes(), tx_index), None)
+			.await?
+			.unwrap_or(false))
+	}
+
+	/// Check if should issuing sync
+	pub async fn verified_issuing(
+		&self,
+		block_hash: web3::types::H256,
+		tx_index: u64,
+	) -> Result<bool> {
+		Ok(self
+			.subxt
+			.verified_issuing_proof((block_hash.to_fixed_bytes(), tx_index), None)
+			.await?
+			.unwrap_or(false))
 	}
 }

@@ -5,7 +5,7 @@ pub struct LogService {
 
 impl LogService {
     pub fn new() -> Self {
-        LogService {  }
+        LogService {}
     }
 }
 
@@ -16,6 +16,10 @@ impl Service for LogService {
             "*.*.*"
         ]
     }
+
+	async fn start(&mut self) -> std::result::Result<(), service::Error> {
+		Ok(())
+	}
 
     async fn send(&self, msg: Message) {
         println!("Message log - [ route_key: {}, content: {} ]", msg.route_key, msg.content);

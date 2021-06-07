@@ -9,11 +9,9 @@ use crate::{
 	frame::{
 		bridge::relay_authorities::EthereumRelayAuthorities,
 		ethereum::{
-            backing::EthereumBacking, 
-            game::EthereumRelayerGame, 
-            relay::EthereumRelay,
-            relay_helper::EthereumRelayHelper,
-        },
+			backing::EthereumBacking, game::EthereumRelayerGame, issuing::EthereumIssuing,
+			relay::EthereumRelay,
+		},
 		proxy::Proxy,
 		sudo::Sudo,
 		technical_committee::TechnicalCommittee,
@@ -21,13 +19,6 @@ use crate::{
 };
 
 use crate::frame::bridge::relay_authorities::RelayAuthority;
-use crate::frame::ethereum::runtime_ext::{
-    DarwiniaMainnetVerifier, 
-    DarwiniaMainnetErc20Redeemer, 
-    DarwiniaMainnetErc20Register,
-    RuntimeExt
-};
-
 use substrate_subxt::{
 	balances::{AccountData, Balances},
 	extrinsic::DefaultExtra,
@@ -41,8 +32,6 @@ use substrate_subxt::{
 	EventTypeRegistry, Runtime,
 };
 
-use crate::chain::ethereum::{EcdsaAddress, EcdsaMessage, EcdsaSignature};
-use codec::{Decode, Encode};
 use sp_core::{H160, H256, U256};
 
 type SessionIndex = u32;
@@ -73,7 +62,7 @@ impl Runtime for DarwiniaRuntime {
 		registry.register_type_size::<EcdsaSignature>("RelayAuthoritySignature");
 		registry.register_type_size::<u8>("ElectionCompute"); // just a hack
 		registry.register_type_size::<u32>("Term");
-		registry.register_type_size::<u64>("EthereumTransactionIndex");
+		registry.register_type_size::<(H256, u64)>("EthereumTransactionIndex");
 		registry.register_type_size::<(u64, u32, u32)>("RelayAffirmationId");
 		registry.register_type_size::<u32>("EraIndex");
 		registry.register_type_size::<u64>("EthereumBlockNumber");
@@ -118,13 +107,6 @@ impl EthereumRelay for DarwiniaRuntime {
 	type RelayAffirmationId = RelayAffirmationId<Self::EthereumBlockNumber>;
 }
 
-impl EthereumRelayHelper for DarwiniaRuntime {
-    fn get_pending_relay_header_number(parcel: Self::PendingRelayHeaderParcel)
-        -> Self::EthereumBlockNumber {
-            parcel.1.header.number
-        }
-}
-
 impl EthereumRelayerGame for DarwiniaRuntime {
 	type RelayAffirmation = RelayAffirmation<
 		EthereumRelayHeaderParcel,
@@ -134,14 +116,39 @@ impl EthereumRelayerGame for DarwiniaRuntime {
 	>;
 }
 
-impl EthereumBacking for DarwiniaRuntime {
-	type EthereumTransactionIndex = u64;
+impl std::fmt::Display
+	for RelayAffirmation<
+		EthereumRelayHeaderParcel,
+		<DarwiniaRuntime as System>::AccountId,
+		<DarwiniaRuntime as Balances>::Balance,
+		RelayAffirmationId<u64>,
+	>
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+		let msg = format!(
+                "{{\n  relayer: {}\n  balance: {}\n  relayer_header: [{}\n  ]\n  id: {:?}\n  verified: {}\n}}",
+                self.relayer,
+                self.stake,
+                self.relay_header_parcels.iter().fold(String::from(""), |acc, relay| {
+                    if acc.is_empty() {
+                        format!("\n  {{\n{}\n  }}", relay)
+                    } else {
+                        format!("{}, \n  {{{}\n  }}", acc, relay)
+                    }
+                }),
+                self.maybe_extended_relay_affirmation_id,
+                self.verified_on_chain
+            );
+		write!(f, "{}", msg)
+	}
 }
 
-impl RuntimeExt for DarwiniaRuntime {
-	type VerifierHandler = DarwiniaMainnetVerifier<Self>;
-	type RedeemErc20Handler = DarwiniaMainnetErc20Redeemer<Self>;
-	type RegisterErc20Handler = DarwiniaMainnetErc20Register<Self>;
+impl EthereumBacking for DarwiniaRuntime {
+	type EthereumTransactionIndex = (H256, u64);
+}
+
+impl EthereumIssuing for DarwiniaRuntime {
+	type EthereumTransactionIndex = (H256, u64);
 }
 
 impl Proxy for DarwiniaRuntime {
@@ -159,6 +166,24 @@ impl EthereumRelayAuthorities for DarwiniaRuntime {
 	type RelayAuthoritySignature = EcdsaSignature;
 	type RelayAuthorityMessage = EcdsaMessage;
 }
+
+use codec::{Decode, Encode};
+
+/// EcdsaAddress
+pub type EcdsaAddress = [u8; 20];
+
+/// EcdsaSignature
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct EcdsaSignature(pub [u8; 65]);
+
+impl Default for EcdsaSignature {
+	fn default() -> Self {
+		Self([0u8; 65])
+	}
+}
+
+/// EcdsaMessage
+pub type EcdsaMessage = [u8; 32];
 
 #[derive(Encode, Decode)]
 enum ExitReason {
