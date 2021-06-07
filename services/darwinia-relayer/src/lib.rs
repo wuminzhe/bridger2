@@ -1,19 +1,28 @@
+mod error;
+mod darwinia_tracker;
+
 use service::{Service, Message};
 
-pub struct LogService {
+#[macro_use]
+extern crate log;
+
+pub type Error = error::Error;
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub struct DarwiniaRelayerService {
 }
 
-impl LogService {
+impl DarwiniaRelayerService {
     pub fn new() -> Self {
-        LogService {  }
+        DarwiniaRelayerService {  }
     }
 }
 
 #[async_trait::async_trait]
-impl Service for LogService {
+impl Service for DarwiniaRelayerService {
     fn get_binding_keys(&self) -> Vec<&'static str> {
         vec![
-            "*.*.*"
+            "*.darwinia.*"
         ]
     }
 

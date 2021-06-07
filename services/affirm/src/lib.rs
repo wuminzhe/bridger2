@@ -1,9 +1,9 @@
 use xtra::{Address, Actor};
 use crate::affirm_actor::{AffirmActor, Affirm};
-use xtra::spawn::Smol;
 use service::{Service, Message};
 
 mod affirm_actor;
+use xtra::spawn::AsyncStd;
 
 pub struct AffirmService {
     actor: Address<AffirmActor>,
@@ -13,7 +13,8 @@ impl AffirmService {
     pub fn new(last_relayed: u64) -> Self {
         let actor = AffirmActor::new()
             .create(None)
-            .spawn(&mut Smol::Global);
+            .spawn(&mut AsyncStd);
+
         AffirmService { actor }
     }
 }
